@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>شورای حل اختلاف</title>
+    <style>
+        body { font-family: Tahoma; background-color: #1e1e1e; color: white; padding: 20px; text-align: center;}
+        .card { background: #2d2d2d; padding: 20px; border-radius: 10px; max-width: 500px; margin: auto; margin-top: 50px; display: none;}
+        input { width: 90%; padding: 10px; margin: 10px 0; border-radius: 5px; border: none; }
+        button { padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; width: 95%;}
+        .message { margin-top: 20px; font-weight: bold; }
+        #loginBox { display: block; }
+        .admin-title { color: #f1c40f; }
+        .user-title { color: #3498db; }
+    </style>
+</head>
+<body>
+    <!-- صفحه ورود -->
+    <div id="loginBox" class="card" style="display: block;">
+        <h2>🕵️‍♂️ ورود به سیستم</h2>
+        <p>لطفاً کد خود را وارد کنید:</p>
+        <input type="password" id="loginCode" placeholder="کد ۵۱۲ (عضو) یا ۶۱۲ (مدیر)">
+        <button onclick="login()">ورود</button>
+        <div id="loginResult" class="message" style="color:red;"></div>
+    </div>
+
+    <!-- پنل مدیر (کد 612) -->
+    <div id="adminPanel" class="card">
+        <h2 class="admin-title">👑 پنل مدیریت (شورا)</h2>
+        <p>شما به عنوان مدیر وارد شدید. اعضای شورا اینجا می‌توانند احضاریه صادر کنند.</p>
+        <input type="text" id="user1" placeholder="اسم نفر اول">
+        <input type="text" id="user2" placeholder="اسم نفر دوم">
+        <input type="text" id="reason" placeholder="دلیل اعتراض...">
+        <button onclick="createCase()">🚀 ارسال احضاریه</button>
+        <div id="result" class="message" style="color:#2ecc71;"></div>
+    </div>
+
+    <!-- پنل عضو (کد 512) -->
+    <div id="userPanel" class="card">
+        <h2 class="user-title">💬 پنل اعضا</h2>
+        <p>شما با موفقیت وارد شدید. منتظر پیام‌های شورا باشید.</p>
+        <p style="color:gray; font-size:14px;">(در نسخه بعدی، چت اینجا فعال می‌شود)</p>
+    </div>
+
+    <script>
+        async function login() {
+            const code = document.getElementById('loginCode').value;
+            const result = document.getElementById('loginResult');
+
+            // درخواست به سرور (فرض کنید آدرس سرور همین لینک رندر است)
+            const response = await fetch('https://yazdan-wbis.onrender.com/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: code })
+            });
+            
+            const data = await response.json();
+            if(data.status === 'admin') {
+                document.getElementById('loginBox').style.display = 'none';
+                document.getElementById('adminPanel').style.display = 'block';
+            } else if(data.status === 'user') {
+                document.getElementById('loginBox').style.display = 'none';
+                document.getElementById('userPanel').style.display = 'block';
+            } else {
+                result.innerText = "کد اشتباه است!";
+            }
+        }
+
+        async function createCase() {
+            const user1 = document.getElementById('user1').value;
+            const user2 = document.getElementById('user2').value;
+            const reason = document.getElementById('reason').value;
+            const resultDiv = document.getElementById('result');
+
+            if(!user1 || !user2 || !reason) {
+                alert("همه کادرها رو پر کن!");
+                return;
+            }
+            resultDiv.innerText = "در حال ارسال...";
+
+            try {
+                const response = await fetch('https://yazdan-wbis.onrender.com/api/case/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user1: user1, user2: user2, reason: reason })
+                });
+                const data = await response.json();
+                resultDiv.innerText = data.message;
+            } catch (error) {
+                resultDiv.innerText = "خطا در اتصال: " + error;
+            }
+        }
+    </script>
+</body>
+</html>
