@@ -1,0 +1,355 @@
+import os
+import random
+import string
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+from flask import Flask, request, session, redirect, url_for, flash, get_flashed_messages
+from werkzeug.utils import secure_filename
+import requests
+
+app = Flask(__name__)
+app.secret_key = "yazdan_super_secret_key_123"
+
+UPLOAD_FOLDER = 'static/videos'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+NESHAN_API_KEY = "" 
+
+# 🚀 تنظیمات ایمیل (این دو خط رو با اطلاعات خودت پر کن)
+SENDER_EMAIL = "your_email@gmail.com"
+SENDER_PASSWORD = "your_16_digit_app_password" 
+
+users_db = {
+    "yazdanzareii18@gmail.com": {"name": "Yazdan (Admin)", "balance": "♾️", "is_admin": True, "cart": [], "messages": []},
+    "test@test.com": {"name": "Test User", "balance": 5000, "is_admin": False, "cart": [], "messages": []}
+}
+
+products = [{"id": 1, "name": "ESP32-S3 Board", "price": 500, "city": "تهران", "email": "seller1@test.com"}]
+videos = []
+next_product_id = 2 
+next_message_id = 1 
+
+channels_db = {
+    "اخبار بازار": [{"sender": "yazdanzareii18@gmail.com", "text": "به کانال رسمی Yazdan Market خوش آمدید! 🛒"}],
+    "گیفت‌ها": [{"sender": "سیستم", "text": "قانون جدید: ارسال گیفت ۱۰ سکه کارمزد دارد (پول می‌سوزد)! 🎁"}]
+}
+
+def get_layout(title, content, active_tab=""):
+    is_logged_in = 'email' in session and session['email'] in users_db
+    is_admin = is_logged_in and session.get('email') == "yazdanzareii18@gmail.com"
+    
+    if is_admin:
+        bg_style = "background: url('/static/admin_bg.jpg') no-repeat center center fixed; background-size: cover;"
+        overlay_style = "background-color: rgba(0, 0, 0, 0.3); min-height: 100vh;"
+    else:
+        bg_style = "background-color: #1e1e1e;"
+        overlay_style = "background-color: transparent; min-height: 100vh;"
+
+    header = f"""
+    <!DOCTYPE html>
+    <html lang="fa" dir="rtl">
+    <head>
+        <meta charset="UTF-8">
+        <title>{title}</title>
+        <script src="https://js.puter.com/v2/"></script>
+        <link rel="stylesheet" href="https://static.neshan.org/sdk/leaflet/v1.9.4/neshan-sdk/v1.0.8/index.css"/>
+        <script src="https://static.neshan.org/sdk/leaflet/v1.9.4/neshan-sdk/v1.0.8/index.js"></script>
+        <style>
+            body {{ font-family: Tahoma, sans-serif; color: white; text-align: center; margin: 0; padding: 0; {bg_style} }}
+            .overlay {{ {overlay_style} }}
+            .header {{ background-color: rgba(45, 45, 45, 0.9); padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3498db; }}
+            .header h1 {{ margin: 0; color: #f1c40f; font-size: 24px; }}
+            .tabs {{ display: flex; justify-content: center; background-color: rgba(45, 45, 45, 0.9); padding: 10px; gap: 10px; flex-wrap: wrap; }}
+            .tab-btn {{ padding: 8px 15px; background: #444; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; transition: 0.3s; font-size: 14px; }}
+            .tab-btn:hover, .tab-btn.active {{ background: #3498db; }}
+            .content {{ padding: 30px; max-width: 1000px; margin: auto; }}
+            .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }}
+            .card {{ background: rgba(45, 45, 45, 0.95); padding: 15px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.5); }}
+            .card h3 {{ margin: 10px 0; color: #f1c40f; }}
+            .card p {{ margin: 5px 0; font-size: 14px; color: #ccc; }}
+            .btn {{ padding: 8px 15px; background: #2ecc71; color: white; border: none; border-radius: 5px; cursor: pointer; font-family: Tahoma; text-decoration: none; display: inline-block; margin-top: 10px; font-size: 14px;}}
+            .btn:hover {{ background: #27ae60; }}
+            .contact-btn {{ background: #3498db; }}
+            .ai-btn {{ background: #9b59b6; }}
+            .ai-btn:hover {{ background: #8e44ad; }}
+            .gift-btn {{ background: #e91e63; }}
+            input, textarea {{ padding: 10px; margin: 5px; border-radius: 5px; border: none; font-family: Tahoma; width: 90%; max-width: 400px; }}
+            .alert {{ padding: 15px; background: #e74c3c; color: white; margin-bottom: 20px; border-radius: 5px; }}
+            .alert.success {{ background: #2ecc71; }}
+            .balance-box {{ background: #333; padding: 10px 20px; border-radius: 20px; color: #2ecc71; font-weight: bold; }}
+            .ai-box {{ background: rgba(45, 45, 45, 0.95); padding: 20px; border-radius: 10px; max-width: 600px; margin: 20px auto; text-align: right; border: 2px solid #9b59b6; }}
+            .ai-loading {{ color: #f1c40f; font-size: 14px; }}
+            .guide-box {{ background: rgba(51, 51, 51, 0.95); padding: 20px; border-radius: 10px; text-align: right; margin-bottom: 20px; border-right: 5px solid #f1c40f; }}
+            .captcha-container {{ display: inline-block; background: #ffffff; border-radius: 8px; padding: 10px; margin: 15px; position: relative; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }}
+            .cart-item {{ background: #ffffff; color: #333; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; text-align: right; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+            .cart-item-info {{ flex-grow: 1; padding-left: 15px; }}
+            .cart-item-img {{ width: 80px; height: 80px; background: #eee; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 30px; }}
+            .cart-qty {{ display: flex; align-items: center; gap: 10px; color: #333; }}
+            .qty-btn {{ background: none; border: 1px solid #ddd; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px; color: #333; }}
+            .checkout-bar {{ background: #ffffff; padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; color: #333; margin-top: 20px; }}
+            #map {{ height: 400px; width: 100%; border-radius: 10px; margin-top: 20px; border: 2px solid #3498db; }}
+            .chat-container {{ display: flex; background: #17212b; border-radius: 10px; overflow: hidden; height: 600px; text-align: right; border: 1px solid #333; }}
+            .chat-sidebar {{ width: 300px; background: #1c2733; border-left: 1px solid #333; display: flex; flex-direction: column; }}
+            .chat-tabs {{ display: flex; padding: 10px; background: #242f3d; border-bottom: 1px solid #333; }}
+            .chat-tab {{ flex: 1; text-align: center; color: #7f91a4; cursor: pointer; padding: 5px; font-size: 14px; border-bottom: 2px solid transparent; text-decoration: none; }}
+            .chat-tab.active {{ color: #3498db; border-bottom: 2px solid #3498db; }}
+            .chat-list {{ flex: 1; overflow-y: auto; }}
+            .chat-item {{ padding: 15px; border-bottom: 1px solid #242f3d; cursor: pointer; display: flex; align-items: center; gap: 15px; transition: 0.2s; }}
+            .chat-item:hover {{ background: #242f3d; }}
+            .chat-avatar {{ width: 45px; height: 45px; border-radius: 50%; background: #3498db; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 18px; }}
+            .chat-info {{ flex: 1; }}
+            .chat-name {{ margin: 0; font-size: 15px; color: #fff; font-weight: bold; }}
+            .chat-preview {{ margin: 5px 0 0 0; font-size: 13px; color: #7f91a4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }}
+            .chat-main {{ flex: 1; display: flex; flex-direction: column; background: #0e1621; }}
+            .chat-header {{ padding: 15px; background: #17212b; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; }}
+            .chat-messages {{ flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }}
+            .message {{ background: #182533; padding: 10px 15px; border-radius: 10px; max-width: 70%; font-size: 14px; align-self: flex-end; position: relative; }}
+            .message.received {{ background: #242f3d; align-self: flex-start; }}
+            .chat-input {{ padding: 15px; background: #17212b; border-top: 1px solid #333; display: flex; gap: 10px; }}
+            .chat-input input {{ flex: 1; background: #242f3d; color: white; border: none; padding: 12px; border-radius: 20px; margin: 0; outline: none; }}
+            .chat-input button {{ background: #3498db; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; margin: 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="overlay">
+        <div class="header">
+            <h1>🛒 Yazdan Market</h1>
+    """
+    
+    if is_logged_in:
+        header += f"""
+            <div class="balance-box">
+                Balance: {users_db[session['email']]['balance']} YazdanCoin
+                | <a href="/logout" style="color:#e74c3c; text-decoration:none;">Logout</a>
+            </div>
+        """
+    header += "</div>"
+
+    if is_logged_in:
+        header += f"""
+        <div class="tabs">
+            <a href="/" class="tab-btn {'active' if active_tab == 'home' else ''}">🏠 Store</a>
+            <a href="/post_ad" class="tab-btn {'active' if active_tab == 'post_ad' else ''}">📢 ثبت آگهی</a>
+            <a href="/cart" class="tab-btn {'active' if active_tab == 'cart' else ''}">🛒 Cart</a>
+            <a href="/messages" class="tab-btn {'active' if active_tab == 'messages' else ''}">📩 پیام‌ها</a>
+            <a href="/send_email" class="tab-btn {'active' if active_tab == 'email' else ''}">✉️ ارسال ایمیل</a>
+            <a href="/upload" class="tab-btn {'active' if active_tab == 'upload' else ''}">📤 Upload Video</a>
+            <a href="/videos" class="tab-btn {'active' if active_tab == 'videos' else ''}">🎬 Videos</a>
+            <a href="/shaba" class="tab-btn {'active' if active_tab == 'shaba' else ''}">🏦 Yazdan Pay</a>
+            <a href="/guide" class="tab-btn {'active' if active_tab == 'guide' else ''}">📖 راهنما</a>
+        </div>
+        """
+
+    header += '<div class="content">'
+    footer = "</div></div></body></html>"
+    
+    flash_html = ""
+    for category, message in get_flashed_messages(with_categories=True):
+        alert_class = "alert success" if category == "success" else "alert"
+        flash_html += f'<div class="{alert_class}">{message}</div>'
+        
+    return header + flash_html + content + footer
+
+@app.route('/', methods=['GET', 'POST'])
+def login_or_shop():
+    if 'email' not in session or session['email'] not in users_db:
+        session.pop('email', None)
+        
+        if request.method == 'POST':
+            email = request.form['email']
+            user_captcha = request.form['captcha'].strip()
+            real_captcha = session.get('captcha_code', '')
+            
+            if user_captcha.lower() != real_captcha.lower():
+                flash("❌ کد کپچا اشتباه است! دوباره تلاش کنید.")
+                return redirect(url_for('login_or_shop'))
+            
+            if email not in users_db:
+                flash("❌ این ایمیل در سیستم ثبت‌نام نشده است! لطفاً ابتدا ثبت‌نام کنید.")
+                return redirect(url_for('login_or_shop'))
+            
+            session['email'] = email
+            flash(f"✅ خوش آمدید {users_db[email]['name']}!")
+            return redirect(url_for('login_or_shop'))
+        
+        captcha_code = ''.join(random.choices(string.ascii_letters + string.digits, k=3))
+        session['captcha_code'] = captcha_code
+        
+        captcha_svg = f"""
+        <svg width="150" height="60" xmlns="http://www.w3.org/2000/svg">
+            <rect width="150" height="60" fill="#ffffff" rx="5"/>
+            <path d="M10,30 Q40,10 80,40 T140,20" stroke="#3498db" stroke-width="4" fill="none"/>
+            <path d="M20,50 Q50,20 100,50 T130,10" stroke="#e67e22" stroke-width="4" fill="none"/>
+            <path d="M5,15 Q60,40 90,10 T145,45" stroke="#f1c40f" stroke-width="4" fill="none"/>
+            <text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" 
+                  font-family="Courier New, monospace" font-size="32" font-weight="bold" fill="#2c3e50" letter-spacing="5">
+                {captcha_code}
+            </text>
+        </svg>
+        """
+        
+        content = f"""
+            <h1>🔐 Login to Yazdan Market</h1>
+            <form method="POST">
+                <input type="email" name="email" placeholder="example@email.com" required><br>
+                <div class="captcha-container">{captcha_svg}</div><br>
+                <input type="text" name="captcha" placeholder="کد کپچا (۳ کاراکتر)" required maxlength="3"><br>
+                <button type="submit" class="btn">Login</button>
+            </form>
+            <p style="margin-top:20px; color:#aaa;">حساب ندارید؟</p>
+            <a href="/register" class="btn" style="background:#3498db;">📝 ثبت‌نام سریع</a>
+        """
+        return get_layout("Login", content)
+
+    content = "<h2>Electronics Store</h2><div class='grid'>"
+    for p in products:
+        content += f"""
+            <div class="card">
+                <h3>{p['name']}</h3>
+                <p>Price: {p['price']} YazdanCoin</p>
+                <p>📍 City: {p['city']}</p>
+                <p style="font-size:12px; color:#888;">📧 {p['email']}</p>
+                <a href="/add_to_cart/{p['id']}" class="btn">Add to Cart</a>
+                <a href="/contact_seller/{p['id']}" class="btn contact-btn">✉️ Contact</a>
+                <button class="btn ai-btn" onclick="aiDescribe({p['id']}, '{p['name']}')">✨ توضیحات هوشمند</button>
+            </div>
+        """
+    content += """
+        </div>
+        <div id="ai-result" class="ai-box" style="display:none;">
+            <h3 style="color:#9b59b6;">🤖 توضیحات هوشمند</h3>
+            <p id="ai-text" style="font-size:16px; color:#f1c40f; line-height:1.8;"></p>
+        </div>
+        <script>
+        async function aiDescribe(pid, productName) {
+            const resultBox = document.getElementById('ai-result');
+            const textBox = document.getElementById('ai-text');
+            resultBox.style.display = 'block';
+            textBox.innerHTML = '<span class="ai-loading">⏳ در حال تولید توضیحات...</span>';
+            const prompt = `یک توضیح کوتاه، جذاب و بازاریابی به زبان فارسی برای محصول "${productName}" بنویس. حداکثر ۲ جمله. فقط متن توضیح رو بده.`;
+            try {
+                const response = await puter.ai.chat(prompt, { model: "gpt-6-luna" });
+                let finalText = (typeof response === 'string') ? response : (response.message ? response.message.content : response.text);
+                textBox.innerText = finalText;
+            } catch (err) {
+                try {
+                    const encoded = encodeURIComponent(prompt);
+                    const res = await fetch(`https://text.pollinations.ai/${encoded}`);
+                    textBox.innerText = await res.text();
+                } catch (err2) {
+                    textBox.innerText = "❌ متاسفانه هوش مصنوعی در دسترس نیست.";
+                }
+            }
+        }
+        </script>
+    """
+    return get_layout("Yazdan Market", content, 'home')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        email = request.form['email']
+        name = request.form['name']
+        user_captcha = request.form['captcha'].strip()
+        real_captcha = session.get('captcha_code', '')
+        
+        if user_captcha.lower() != real_captcha.lower():
+            flash("❌ کد کپچا اشتباه است!")
+            return redirect(url_for('register'))
+        
+        if email in users_db:
+            flash("⚠️ این ایمیل قبلاً ثبت‌نام کرده است! لطفاً وارد شوید.")
+            return redirect(url_for('login_or_shop'))
+        
+        users_db[email] = {"name": name, "balance": 1000, "is_admin": False, "cart": [], "messages": []}
+        flash(f"✅ ثبت‌نام موفق! ۱۰۰۰ YazdanCoin هدیه به شما داده شد. حالا وارد شوید.")
+        return redirect(url_for('login_or_shop'))
+        
+    captcha_code = ''.join(random.choices(string.ascii_letters + string.digits, k=3))
+    session['captcha_code'] = captcha_code
+    
+    captcha_svg = f"""
+    <svg width="150" height="60" xmlns="http://www.w3.org/2000/svg">
+        <rect width="150" height="60" fill="#ffffff" rx="5"/>
+        <path d="M10,30 Q40,10 80,40 T140,20" stroke="#3498db" stroke-width="4" fill="none"/>
+        <path d="M20,50 Q50,20 100,50 T130,10" stroke="#e67e22" stroke-width="4" fill="none"/>
+        <path d="M5,15 Q60,40 90,10 T145,45" stroke="#f1c40f" stroke-width="4" fill="none"/>
+        <text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" 
+              font-family="Courier New, monospace" font-size="32" font-weight="bold" fill="#2c3e50" letter-spacing="5">
+            {captcha_code}
+        </text>
+    </svg>
+    """
+    
+    content = f"""
+        <h1>📝 ثبت‌نام سریع</h1>
+        <form method="POST">
+            <input type="text" name="name" placeholder="نام شما" required><br>
+            <input type="email" name="email" placeholder="ایمیل شما" required><br>
+            <div class="captcha-container">{captcha_svg}</div><br>
+            <input type="text" name="captcha" placeholder="کد کپچا (۳ کاراکتر)" required maxlength="3"><br>
+            <button type="submit" class="btn" style="background:#3498db;">ثبت‌نام</button>
+        </form>
+        <p style="margin-top:20px;"><a href="/" style="color:#f1c40f;">بازگشت به لاگین</a></p>
+    """
+    return get_layout("ثبت‌نام", content)
+
+@app.route('/post_ad', methods=['GET', 'POST'])
+def post_ad():
+    global next_product_id
+    if 'email' not in session: return redirect(url_for('login_or_shop'))
+    
+    if request.method == 'POST':
+        name = request.form['name']
+        price = int(request.form['price'])
+        city = request.form['city']
+        email = request.form['email']
+        
+        new_product = {"id": next_product_id, "name": name, "price": price, "city": city, "email": email}
+        products.append(new_product)
+        next_product_id += 1
+        
+        flash(f"✅ آگهی محصول «{name}» با موفقیت ثبت شد!")
+        return redirect(url_for('login_or_shop'))
+
+    content = """
+        <div class="guide-box">
+            <h2>📢 ثبت آگهی محصول جدید</h2>
+            <form method="POST">
+                <input type="text" name="name" placeholder="نام محصول" required><br>
+                <input type="number" name="price" placeholder="قیمت (YazdanCoin)" required><br>
+                <input type="text" name="city" placeholder="شهر شما" required><br>
+                <input type="email" name="email" placeholder="ایمیل شما" required><br>
+                <button type="submit" class="btn" style="background:#2ecc71;">ثبت آگهی</button>
+            </form>
+        </div>
+    """
+    return get_layout("ثبت آگهی", content, 'post_ad')
+
+# 🚀 روت ارسال ایمیل با قابلیت پیوست و ارسال گروهی
+@app.route('/send_email', methods=['GET', 'POST'])
+def send_email():
+    if 'email' not in session: return redirect(url_for('login_or_shop'))
+    
+    if request.method == 'POST':
+        receiver_input = request.form['receiver']
+        # پشتیبانی از ارسال گروهی (جدا کردن با کاما)
+        receivers = [email.strip() for email in receiver_input.split(',')]
+        
+        subject = request.form['subject']
+        body = request.form['body']
+        
+        # بررسی تنظیمات
+        if SENDER_EMAIL == "your_email@gmail.com":
+            flash("⚠️ تنظیمات ایمیل در کد وارد نشده است! (SENDER_EMAIL و SENDER_PASSWORD)", "error")
+            return redirect(url_for('send_email'))
+
+        # ساخت ساختار ایمیل
+        message = MIMEMultipart()
+        message["From"] = SENDER_EMAIL
+        message["To"] = ", ".join(receivers)
+        message["Subj
